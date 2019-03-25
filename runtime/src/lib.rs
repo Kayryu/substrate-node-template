@@ -5,49 +5,24 @@
 // `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
 #![recursion_limit="256"]
 
-extern crate sr_std as rstd;
-extern crate sr_io as runtime_io;
-#[macro_use]
-extern crate substrate_client as client;
-#[macro_use]
-extern crate srml_support;
-#[macro_use]
-extern crate sr_primitives as runtime_primitives;
 #[cfg(feature = "std")]
-#[macro_use]
-extern crate serde_derive;
-extern crate substrate_primitives as primitives;
-extern crate parity_codec;
-#[macro_use]
-extern crate parity_codec_derive;
-#[macro_use]
-extern crate sr_version as version;
-extern crate srml_system as system;
-extern crate srml_executive as executive;
-extern crate srml_consensus as consensus;
-extern crate srml_timestamp as timestamp;
-extern crate srml_balances as balances;
-extern crate srml_sudo as sudo;
-extern crate srml_aura as aura;
-extern crate srml_indices as indices;
-extern crate substrate_consensus_aura_primitives as consensus_aura;
-
+use serde_derive::{Serialize, Deserialize};
+use parity_codec::{Encode, Decode};
 use rstd::prelude::*;
 #[cfg(feature = "std")]
 use primitives::bytes;
-use primitives::{Ed25519AuthorityId, OpaqueMetadata};
+use primitives::{ed25519, OpaqueMetadata};
 use runtime_primitives::{
-	ApplyResult, transaction_validity::TransactionValidity, Ed25519Signature, generic,
-	traits::{self, BlakeTwo256, Block as BlockT, StaticLookup, Extrinsic},
+	ApplyResult, transaction_validity::TransactionValidity, generic, create_runtime_str,
+	traits::{self, BlakeTwo256, Block as BlockT, StaticLookup, Verify}
 };
 use client::{
 	block_builder::api::{CheckInherentsResult, InherentData, self as block_builder_api},
-	runtime_api
+	runtime_api, impl_runtime_apis
 };
 use version::RuntimeVersion;
 #[cfg(feature = "std")]
 use version::NativeVersion;
-use consensus_aura::api as aura_api;
 
 // A few exports that help ease life for downstream crates.
 #[cfg(any(feature = "std", test))]
@@ -57,10 +32,19 @@ pub use timestamp::Call as TimestampCall;
 pub use balances::Call as BalancesCall;
 pub use runtime_primitives::{Permill, Perbill};
 pub use timestamp::BlockPeriod;
-pub use srml_support::{StorageValue, RuntimeMetadata};
+pub use support::{StorageValue, construct_runtime};
 
-/// Alias to Ed25519 pubkey that identifies an account on the chain.
-pub type AccountId = primitives::H256;
+/// The type that is used for identifying authorities.
+pub type AuthorityId = <AuthoritySignature as Verify>::Signer;
+
+/// The type used by authorities to prove their ID.
+pub type AuthoritySignature = ed25519::Signature;
+
+/// Alias to pubkey that identifies an account on the chain.
+pub type AccountId = <AccountSignature as Verify>::Signer;
+
+/// The type used by authorities to prove their ID.
+pub type AccountSignature = ed25519::Signature;
 
 /// A hash of some data used by the chain.
 pub type Hash = primitives::H256;
@@ -70,6 +54,9 @@ pub type BlockNumber = u64;
 
 /// Index of an account's extrinsic in the chain.
 pub type Nonce = u64;
+
+/// Used for the module template in `./template.rs`
+mod template;
 
 /// Opaque types. These are used by the CLI to instantiate machinery that don't need to know
 /// the specifics of the runtime. They can then be made to be agnostic over specific formats
@@ -88,13 +75,13 @@ pub mod opaque {
 		}
 	}
 	/// Opaque block header type.
-	pub type Header = generic::Header<BlockNumber, BlakeTwo256, generic::DigestItem<Hash, Ed25519AuthorityId>>;
+	pub type Header = generic::Header<BlockNumber, BlakeTwo256, generic::DigestItem<Hash, AuthorityId, AuthoritySignature>>;
 	/// Opaque block type.
 	pub type Block = generic::Block<Header, UncheckedExtrinsic>;
 	/// Opaque block identifier type.
 	pub type BlockId = generic::BlockId<Block>;
 	/// Opaque session key type.
-	pub type SessionKey = Ed25519AuthorityId;
+	pub type SessionKey = AuthorityId;
 }
 
 /// This runtime version.
@@ -147,7 +134,7 @@ impl aura::Trait for Runtime {
 
 impl consensus::Trait for Runtime {
 	/// The identifier we use to refer to authorities.
-	type SessionKey = Ed25519AuthorityId;
+	type SessionKey = AuthorityId;
 	// The aura module handles offline-reports internally
 	// rather than using an explicit report system.
 	type InherentOfflineReport = ();
@@ -180,10 +167,12 @@ impl balances::Trait for Runtime {
 	type OnFreeBalanceZero = ();
 	/// What to do if a new account is created.
 	type OnNewAccount = Indices;
-	/// Restrict whether an account can transfer funds. We don't place any further restrictions.
-	type EnsureAccountLiquid = ();
 	/// The uniquitous event type.
 	type Event = Event;
+
+	type TransactionPayment = ();
+	type DustRemoval = ();
+	type TransferPayment = ();
 }
 
 impl sudo::Trait for Runtime {
@@ -192,8 +181,13 @@ impl sudo::Trait for Runtime {
 	type Proposal = Call;
 }
 
+/// Used for the module template in `./template.rs`
+impl template::Trait for Runtime { 
+	type Event = Event;
+}
+
 construct_runtime!(
-	pub enum Runtime with Log(InternalLog: DigestItem<Hash, Ed25519AuthorityId>) where
+	pub enum Runtime with Log(InternalLog: DigestItem<Hash, AuthorityId, AuthoritySignature>) where
 		Block = Block,
 		NodeBlock = opaque::Block,
 		UncheckedExtrinsic = UncheckedExtrinsic
@@ -205,6 +199,8 @@ construct_runtime!(
 		Indices: indices,
 		Balances: balances,
 		Sudo: sudo,
+		// Used for the module template in `./template.rs`
+		TemplateModule: template::{Module, Call, Storage, Event<T>},
 	}
 );
 
@@ -219,7 +215,7 @@ pub type Block = generic::Block<Header, UncheckedExtrinsic>;
 /// BlockId type as expected by this runtime.
 pub type BlockId = generic::BlockId<Block>;
 /// Unchecked extrinsic type as expected by this runtime.
-pub type UncheckedExtrinsic = generic::UncheckedMortalCompactExtrinsic<Address, Nonce, Call, Ed25519Signature>;
+pub type UncheckedExtrinsic = generic::UncheckedMortalCompactExtrinsic<Address, Nonce, Call, AccountSignature>;
 /// Extrinsic type that has already been checked.
 pub type CheckedExtrinsic = generic::CheckedExtrinsic<AccountId, Nonce, Call>;
 /// Executive: handles dispatch to the various modules.
@@ -232,7 +228,7 @@ impl_runtime_apis! {
 			VERSION
 		}
 
-		fn authorities() -> Vec<Ed25519AuthorityId> {
+		fn authorities() -> Vec<AuthorityId> {
 			Consensus::authorities()
 		}
 
@@ -279,7 +275,7 @@ impl_runtime_apis! {
 		}
 	}
 
-	impl aura_api::AuraApi<Block> for Runtime {
+	impl consensus_aura::AuraApi<Block> for Runtime {
 		fn slot_duration() -> u64 {
 			Aura::slot_duration()
 		}
