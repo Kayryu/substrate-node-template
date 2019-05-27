@@ -19,16 +19,17 @@ pub trait Trait: system::Trait {
 	type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
 }
 
-/// This module's storage items.
+// This module's storage items.
 decl_storage! {
 	trait Store for Module<T: Trait> as TemplateModule {
-		// Just a dummy storage item. 
+		// Just a dummy storage item.
 		// Here we are declaring a StorageValue, `Something` as a Option<u32>
 		// `get(something)` is the default getter which returns either the stored `u32` or `None` if nothing stored
 		Something get(something): Option<u32>;
 	}
 }
 
+// The module's dispatchable functions.
 decl_module! {
 	/// The module declaration.
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
@@ -55,7 +56,6 @@ decl_module! {
 }
 
 decl_event!(
-	/// An event in this module.
 	pub enum Event<T> where AccountId = <T as system::Trait>::AccountId {
 		// Just a dummy event.
 		// Event `Something` is declared with a parameter of the type `u32` and `AccountId`
